@@ -22,10 +22,15 @@ class LaTeXTokenizer:
         self.pattern = re.compile(r"\\[a-zA-Z]+|\. |[a-zA-Z0-9]|\S")
 
     def decode(self, token_ids):
-        """Transforme les IDs prédits par le Transformer en chaîne LaTeX."""
+        """Transforme les IDs en chaîne LaTeX, gère les int et les Tenseurs."""
         tokens = []
         for t in token_ids:
-            token = self.inverse_vocab.get(t.item(), self.unk_token)
+            # Correction : On vérifie si 't' a la méthode .item() (cas du Tenseur)
+            # Sinon, on utilise 't' directement (cas de l'entier)
+            val = t.item() if hasattr(t, 'item') else t
+            
+            token = self.inverse_vocab.get(val, self.unk_token)
+            
             if token == self.eos_token:
                 break
             if token not in self.special_tokens:

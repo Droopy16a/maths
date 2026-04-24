@@ -35,10 +35,18 @@ def train_model():
     if os.path.exists(CHECKPOINT_PATH):
         print(f"Chargement du checkpoint : {CHECKPOINT_PATH}")
         checkpoint = torch.load(CHECKPOINT_PATH, map_location=device)
-        model.load_state_dict(checkpoint['model_state_dict'])
-        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        start_epoch = checkpoint['epoch'] + 1
-        print(f"Reprise de l'entraînement à l'époque {start_epoch + 1}")
+        
+        # CAS 1 : C'est un checkpoint complet (Dictionnaire)
+        if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+            model.load_state_dict(checkpoint['model_state_dict'])
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            start_epoch = checkpoint['epoch'] + 1
+            print(f"Reprise de l'entraînement à l'époque {start_epoch + 1}")
+        
+        # CAS 2 : Ce sont juste les poids bruts (State Dict)
+        else:
+            model.load_state_dict(checkpoint)
+            print("Poids bruts chargés. Reprise à l'époque 1 (l'optimiseur a été réinitialisé).")
 
     # DATASET
     transform = transforms.Compose([
