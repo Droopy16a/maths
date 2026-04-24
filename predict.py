@@ -1,72 +1,72 @@
 import torch
 from torchvision import transforms
 from PIL import Image
+import json
 from model import HMERModel
 from tokenizer import LaTeXTokenizer
 
-def predict_latex(image_path, model_path="model_weights.pth"):
-    # 1. Initialisation
+def load_prediction_model(model_path, vocab_path):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
-    # ATTENTION: Il faut charger la vraie liste de vocabulaire générée pendant l'entraînement
-    # Ici on simule une liste factice pour que le code tourne
-    vocab_simule = ['[PAD]', '[BOS]', '[EOS]', '[UNK]', 'x', '^', '2', '+', 'y', '=', 'z', '\\alpha']
-    tokenizer = LaTeXTokenizer(vocab_list=vocab_simule)
+    with open(vocab_path, 'r') as f:
+        vocab_list = json.load(f)
+    tokenizer = LaTeXTokenizer(vocab_list=vocab_list)
     
     model = HMERModel(vocab_size=tokenizer.get_vocab_size()).to(device)
     
-    # 2. Chargement des poids (Décommente ceci une fois que tu as entraîné le modèle !)
-    # model.load_state_dict(torch.load(model_path, map_location=device))
+    # Charger les poids (on gère le dictionnaire complet ou juste les poids)
+    state_dict = torch.load(model_path, map_location=device)
+    if 'model_state_dict' in state_dict:
+        model.load_state_dict(state_dict['model_state_dict'])
+    else:
+        model.load_state_dict(state_dict)
+        
     model.eval()
+    return model, tokenizer, device
 
-    # 3. Préparation de l'image (identique à l'entraînement de l'article)
+def predict(image_path, model, tokenizer, device):
     transform = transforms.Compose([
-        transforms.Grayscale(num_output_channels=3), # DenseNet attend du RGB
-        transforms.Resize((224, 224)), # Taille standard ImageNet
+        transforms.Resize((224, 224)),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
     
-    image = Image.open(image_path).convert('RGB')
-    image_tensor = transform(image).unsqueeze(0).to(device) # Ajout dimension Batch
-
-    # 4. Inférence (Génération autorégressive)
-    max_length = 150 # Longueur maximale de l'équation
+    img = Image.open(image_path).convert('RGB')
+    img_tensor = transform(img).unsqueeze(0).to(device)
     
+    max_len = 100
     with torch.no_grad():
-        # L'image passe dans DenseNet
-        memory = model.forward_encoder(image_tensor)
+        memory = model.forward_encoder(img_tensor)
+        # On commence par le token de début [BOS]
+        tokens = [tokenizer.vocab['[BOS]']]
         
-        # On commence la phrase avec le token [BOS]
-        target_indices = [tokenizer.vocab['[BOS]']]
-        
-        for _ in range(max_length):
-            tgt_tensor = torch.LongTensor([target_indices]).to(device)
+        for _ in range(max_len):
+            tgt_tensor = torch.LongTensor([tokens]).to(device)
+            # Embedding + Position
             tgt_embed = model.embedding(tgt_tensor) + model.pos_encoder[:, :tgt_tensor.size(1), :]
-            
-            # Mask pour empêcher le modèle de tricher (regarder dans le futur)
             tgt_mask = nn.Transformer.generate_square_subsequent_mask(tgt_tensor.size(1)).to(device)
             
-            # Prédiction du prochain symbole
             output = model.decoder(tgt_embed, memory, tgt_mask=tgt_mask)
             logits = model.fc_out(output)
-            next_token_id = logits[0, -1, :].argmax().item()
             
-            target_indices.append(next_token_id)
+            # On prend le dernier symbole prédit
+            next_token = logits[0, -1, :].argmax().item()
+            tokens.append(next_token)
             
-            if next_token_id == tokenizer.vocab['[EOS]']:
+            if next_token == tokenizer.vocab['[EOS]']:
                 break
                 
-    # 5. Décodage final
-    latex_result = tokenizer.decode(target_indices[1:]) # On ignore le [BOS]
-    return latex_result
+    return tokenizer.decode(tokens)
 
 if __name__ == "__main__":
-    # Test avec une image
-    chemin_image = "equation_test.png" 
-    try:
-        result = predict_latex(chemin_image)
-        print("\n--- Équation Détectée ---")
-        print(f"$$ {result} $$")
-    except FileNotFoundError:
-        print(f"Crée une petite image nommée '{chemin_image}' pour tester le script !")
+    # Paramètres
+    MODEL_WEIGHTS = "INTERRUPTED_model.pth" # Ou le dernier model_weights_epoch_X.pth
+    VOCAB_FILE = "vocab.json"
+    TEST_IMAGE = "testX.png" # Place une image ici pour tester
+    
+    print("Chargement du modèle...")
+    model, tokenizer, device = load_prediction_model(MODEL_WEIGHTS, VOCAB_FILE)
+    
+    print("Analyse de l'image...")
+    result = predict(TEST_IMAGE, model, tokenizer, device)
+    print(f"\nRésultat LaTeX : {result}")
